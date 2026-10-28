@@ -181,8 +181,8 @@ footer .wrap{padding-block:20px 28px;font-size:13px;color:var(--muted);display:g
       <p>以 360° 模型認識三種主流無人機的組件編號、功能與運作原理，並對照國際實際機型與遙控鏈路選擇。</p>
     </div>
     <dl class="meta">
-      <dt>版本</dt><dd class="ver">v1.1</dd>
-      <dt>生成時間</dt><dd>2026-10-28 19:52（UTC+8）</dd>
+      <dt>版本</dt><dd class="ver">v1.2</dd>
+      <dt>生成時間</dt><dd>2026-10-29 08:05（UTC+8）</dd>
     </dl>
   </div>
 </header>
@@ -204,12 +204,14 @@ footer .wrap{padding-block:20px 28px;font-size:13px;color:var(--muted);display:g
   <section class="part" id="s1">
     <div class="sec-head"><span class="no">1</span><h2 id="h1t">多軸式無人機 360° 模型</h2><p id="lede"></p></div>
     <div class="viewer">
-      <div id="stage">
+      <div id="stage" tabindex="-1">
         <div class="st-title"><div class="eyebrow" id="st-eb">MULTIROTOR UAV</div><h3 id="st-h">多軸式無人機</h3><div class="en" id="st-c"></div></div>
-        <div class="st-hint">拖曳旋轉 · 滾輪縮放 · 右鍵平移<br>滑鼠指向組件顯示編號與名稱</div>
+        <div class="st-hint">拖曳旋轉 · 滾輪縮放 · 右鍵平移<br>滑鼠指向組件顯示編號與名稱<br>爆炸圖＋◀ ▶ 可逐一檢視組件</div>
         <div id="tip"><span class="num"></span><div><div class="zh"></div><div class="en"></div></div></div>
         <div id="gl-err">此裝置的瀏覽器無法啟用 WebGL，3D 模型無法顯示；下方組件表與其他段落不受影響。</div>
         <div class="bar">
+          <button id="bExp" aria-pressed="false">爆炸圖</button>
+          <button id="bPrev" aria-label="上一個組件" title="上一個組件（←）">◀</button><button id="bNext" aria-label="下一個組件" title="下一個組件（→）">▶</button>
           <button id="bRot" aria-pressed="true">自動旋轉</button>
           <button id="bLbl" aria-pressed="false">顯示全部編號</button>
           <button id="bSpin" aria-pressed="false">旋翼轉動</button>
@@ -247,7 +249,7 @@ footer .wrap{padding-block:20px 28px;font-size:13px;color:var(--muted);display:g
 
 <footer>
   <div class="wrap">
-    <div><b>無人機組件圖鑑</b> · v1.1 · 生成時間 2026-10-28 19:52（UTC+8）</div>
+    <div><b>無人機組件圖鑑</b> · v1.2 · 生成時間 2026-10-29 08:05（UTC+8）</div>
     <div>3D 模型為教學用概略構型，非特定廠牌機型；範例規格整理自各製造商公開資料與維基百科，數值為概略值。範例照片取自 Wikimedia Commons，依各檔案標示之授權（CC0、CC BY、CC BY-SA、公有領域、英國 OGL）使用並註明作者；部分照片為同系列相近型號，已於圖下註明。</div>
     <div>3D 引擎：three.js r147（MIT 授權）。</div>
   </div>
@@ -1697,11 +1699,12 @@ const CALC = [
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let cur='multi', sel=null, hov=null;
-const state={rot:true,lbl:false,spin:false,ghost:true};
+const state={rot:true,lbl:false,spin:false,ghost:true,exp:false};
 
 /* ================= 3D 場景 ================= */
 const stage=$('#stage');
 let renderer=null, scene, camera, controls, root, pick=[], spinners=[], labels=[], partMeshes={}, ANCH={};
+let EXP=[], exT=0, groundY=0, explR=1, tgtGoal=null, distGoal=null;
 const COARSE=matchMedia('(pointer: coarse)').matches;
 try{
   renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:COARSE?'low-power':'default'});
@@ -2001,14 +2004,39 @@ function buildScene(t){
     const pos=ANCH[p.id]?ANCH[p.id].clone():new THREE.Box3().setFromObject(ms[0]).getCenter(new THREE.Vector3());
     const s=makeLabel(p.n); s.position.copy(pos); s.userData.pid=p.id; s.visible=state.lbl; root.add(s); labels.push(s); });
   const r=Math.max(sz.x,sz.y,sz.z);
+  // 爆炸圖：每個組件沿「機體中心 → 組件中心」方向外移（垂直方向加重，避免上下疊在一起）
+  explR=r*.3; groundY=gy; EXP=[];
+  const pc={}; Object.keys(partMeshes).forEach(id=>{ const b=new THREE.Box3(); partMeshes[id].forEach(m=>b.expandByObject(m)); pc[id]=b.getCenter(new THREE.Vector3()); });
+  const dirFor=id=>{ const d=pc[id].clone().sub(ctr); d.y*=1.8; if(d.length()<r*.04) d.set(0,1,0); return d.normalize().multiplyScalar(explR); };
+  const spinSet=new Map();
+  spinners.forEach(sp=>{ let pid=null; sp.o.traverse(o=>{ if(!pid&&o.isMesh&&o.userData.pid) pid=o.userData.pid; }); spinSet.set(sp.o,pid);
+    if(pid) EXP.push({o:sp.o,base:sp.o.position.clone(),off:dirFor(pid)}); });
+  pick.forEach(m=>{ if(m.parent&&m.parent.isMesh) return; // 附在其他零件上的小件跟著父件走
+    let a=m.parent, sp=null; while(a&&a!==root){ if(spinSet.has(a)){ sp=a; break; } a=a.parent; }
+    if(sp){ if(m.userData.pid!==spinSet.get(sp)) EXP.push({o:m,base:m.position.clone(),off:V(0,explR*.5,0)}); return; }
+    const off=dirFor(m.userData.pid);
+    if(m.parent!==root) off.applyQuaternion(m.parent.getWorldQuaternion(new THREE.Quaternion()).invert());
+    EXP.push({o:m,base:m.position.clone(),off}); });
+  // 標籤跟著組件實際的位移走：先完整展開一次，量每個組件中心移動多少
+  root.updateMatrixWorld(true); const c0={}; Object.keys(partMeshes).forEach(id=>c0[id]=partCenter(id));
+  exT=1; applyExplode(); root.updateMatrixWorld(true);
+  labels.forEach(l=>{ const id=l.userData.pid, c1=partCenter(id); EXP.push({o:l,base:l.position.clone(),off:c1&&c0[id]?c1.sub(c0[id]):dirFor(id)}); });
+  exT=state.exp?1:0; applyExplode(); tgtGoal=null; distGoal=null;
   HOME.tgt=ctr.clone(); HOME.pos=ctr.clone().add(V(r*.95,r*.62,-r*1.0));
   if(t==='fixed') HOME.pos=ctr.clone().add(V(r*.62,r*.55,-r*.85));
   resize(); resetView(); applyHighlight();
 }
-function resetView(){ if(!renderer) return;
+const ease=x=>x<.5?2*x*x:1-Math.pow(-2*x+2,2)/2;
+function applyExplode(){ const k=ease(exT);
+  EXP.forEach(e=>e.o.position.copy(e.base).addScaledVector(e.off,k));
+  if(ground){ ground.position.y=groundY-explR*.9*k; grid.position.y=ground.position.y+.01; } }
+function partCenter(id){ const b=new THREE.Box3(); (partMeshes[id]||[]).forEach(m=>b.expandByObject(m)); return b.isEmpty()?null:b.getCenter(new THREE.Vector3()); }
+function resetView(){ if(!renderer) return; tgtGoal=null;
   const a=stage.clientWidth/Math.max(1,stage.clientHeight), k=a<1.1?Math.min(2.4,1.45/a):1;
   camera.position.copy(HOME.tgt).add(HOME.pos.clone().sub(HOME.tgt).multiplyScalar(k)); controls.target.copy(HOME.tgt);
-  controls.minDistance=HOME.pos.distanceTo(HOME.tgt)*.3; controls.maxDistance=HOME.pos.distanceTo(HOME.tgt)*3.5; controls.update(); }
+  controls.minDistance=HOME.pos.distanceTo(HOME.tgt)*.3; controls.maxDistance=HOME.pos.distanceTo(HOME.tgt)*6;
+  if(state.exp) camera.position.sub(controls.target).multiplyScalar(1.6).add(controls.target);
+  distGoal=null; controls.update(); }
 
 function isDark(){const t=document.documentElement.dataset.theme; return t? t==='dark' : matchMedia('(prefers-color-scheme: dark)').matches;}
 
@@ -2050,6 +2078,10 @@ if('IntersectionObserver' in window && renderer){ new IntersectionObserver(es=>{
 function loop(t){ requestAnimationFrame(loop); if(!renderer||!visible||document.hidden){ last=t; return; }
   const dt=Math.min(.05,(t-last)/1000); last=t;
   if(state.spin) spinners.forEach(s=>{ s.o.rotation[s.ax]+=dt*s.sp*14; });
+  const goal=state.exp?1:0; if(Math.abs(exT-goal)>.001){ exT+= Math.sign(goal-exT)*Math.min(Math.abs(goal-exT),dt*1.6); applyExplode(); }
+  if(tgtGoal){ const before=controls.target.clone(); controls.target.lerp(tgtGoal,Math.min(1,dt*5)); camera.position.add(controls.target.clone().sub(before)); if(controls.target.distanceTo(tgtGoal)<.01) tgtGoal=null; }
+  if(distGoal){ const v=camera.position.clone().sub(controls.target), d=v.length(), nd=d+(distGoal-d)*Math.min(1,dt*4);
+    camera.position.copy(controls.target).addScaledVector(v.normalize(),nd); if(Math.abs(nd-distGoal)<.02) distGoal=null; }
   controls.autoRotate=state.rot && !sel; controls.update(); renderer.render(scene,camera); }
 requestAnimationFrame(loop);
 
@@ -2107,6 +2139,22 @@ tb.addEventListener('mouseleave',()=>setHover(null));
 function tog(id,key,fn){ const b=$(id); b.addEventListener('click',()=>{ state[key]=!state[key]; b.setAttribute('aria-pressed',state[key]); fn&&fn(); }); }
 tog('#bRot','rot'); tog('#bLbl','lbl',applyHighlight); tog('#bSpin','spin'); tog('#bGhost','ghost',applyHighlight);
 $('#bReset').addEventListener('click',()=>{ select(null); resetView(); });
+// 爆炸圖：開啟時順便顯示全部編號；關閉時恢復原本設定
+let lblBefore=false;
+$('#bExp').addEventListener('click',()=>{ state.exp=!state.exp; $('#bExp').setAttribute('aria-pressed',state.exp);
+  if(renderer) distGoal=camera.position.distanceTo(controls.target)*(state.exp?1.6:1/1.6);
+  if(state.exp){ lblBefore=state.lbl; state.lbl=true; } else { state.lbl=lblBefore; tgtGoal=HOME.tgt?HOME.tgt.clone():null; }
+  $('#bLbl').setAttribute('aria-pressed',state.lbl); applyHighlight(); });
+// 逐一檢視：依編號切換組件，鏡頭對準該組件（爆炸後位置）
+function step(d){ const ps=TYPES[cur].parts; let i=ps.findIndex(p=>p.id===sel); i=i<0?(d>0?0:ps.length-1):(i+d+ps.length)%ps.length;
+  select(ps[i].id); if(!renderer) return;
+  const goalExp=state.exp?1:0, k=ease(goalExp);
+  // 以爆炸動畫結束後的位置為目標
+  const saved=exT; exT=goalExp; applyExplode(); root.updateMatrixWorld(true); const c=partCenter(ps[i].id); exT=saved; applyExplode();
+  if(c) tgtGoal=c; }
+$('#bPrev').addEventListener('click',()=>step(-1));
+$('#bNext').addEventListener('click',()=>step(1));
+stage.addEventListener('keydown',e=>{ if(e.key==='ArrowRight'){ step(1); e.preventDefault(); } if(e.key==='ArrowLeft'){ step(-1); e.preventDefault(); } });
 
 /* ================= 範例構型示意圖（SVG） ================= */
 function illo(p){
